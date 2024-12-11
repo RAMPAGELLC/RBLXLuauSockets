@@ -20,7 +20,7 @@ local Maid = require(ReplicatedStorage.Packages.Maid)
 
 export type ServerEventSocketAPI = {
 	Init: (Player: Player) -> ServerEventSocketAPI,
-	on: (socket: string, return_data: boolean, onTrigger: (...any) -> nil) -> nil,
+	on: (socket: string, onTrigger: (...any) -> nil, return_data: boolean) -> nil,
 	emit: (socket: string, ...any) -> ...any,
 	Destroy: () -> nil,
 
@@ -37,6 +37,12 @@ export type ClientEventSocketAPI = {
 
 	Maid: any,
 }
+
+if not ReplicatedStorage:FindFirstChild("__CACHE") then
+	local Cache = Instance.new("Folder")
+	Cache.Name = "__CACHE"
+	Cache.Parent = ReplicatedStorage
+end
 
 local Server = {}
 Server.__index = Server
@@ -64,7 +70,7 @@ function Server:FindEvent(SocketName: string, AllowDataReturn: boolean)
 	return self.Events:FindFirstChild(SocketName) or Instance.new(AllowDataReturn and "RemoteFunction" or "UnreliableRemoteEvent")
 end
 
-function Server:on(SocketName: string, AllowDataReturn: boolean, OnTrigger: (...any) -> nil)
+function Server:on(SocketName: string, OnTrigger: (...any) -> nil, AllowDataReturn: boolean)
 	local Event = self:FindEvent(SocketName, AllowDataReturn)
     Event.Parent = self.Events;
 	Event.Name = SocketName

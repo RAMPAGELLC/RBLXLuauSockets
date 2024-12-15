@@ -20,7 +20,11 @@ local Maid = require(ReplicatedStorage.Packages.Maid)
 
 export type ServerEventSocketAPI = {
 	Init: (Player: Player) -> ServerEventSocketAPI,
-	on: (socket: string, onTrigger: (...any) -> nil, return_data: boolean) -> nil,
+	open: (socket: string, AllowDataReturn: boolean?) -> nil,
+	connect: (socket: string, AllowDataReturn: boolean?) -> nil,
+	close: (socket: string) -> nil,
+	disconnect: (socket: string) -> nil,
+	on: (socket: string, onTrigger: (...any) -> nil?, return_data: boolean?, SilenceWarnings: boolean?) -> nil,
 	emit: (socket: string, ...any) -> ...any,
 	Destroy: () -> nil,
 
@@ -33,6 +37,7 @@ export type ClientEventSocketAPI = {
 	Init: (Events: Folder) -> ClientEventSocketAPI,
 	on: (SocketName: string, OnTrigger: (...any) -> nil) -> nil,
 	emit: (socket: string, ...any) -> ...any,
+	emitSilent: (socket: string, ...any) -> ...any,
 	Destroy: () -> nil,
 
 	Maid: any,
@@ -67,18 +72,57 @@ function Server:Init(MiddlewareAuthentication): ServerEventSocketAPI
 end
 
 function Server:FindEvent(SocketName: string, AllowDataReturn: boolean)
-	return self.Events:FindFirstChild(SocketName) or Instance.new(AllowDataReturn and "RemoteFunction" or "UnreliableRemoteEvent")
+	return self.Events:FindFirstChild(SocketName)
+		or Instance.new(AllowDataReturn and "RemoteFunction" or "UnreliableRemoteEvent")
 end
 
-function Server:on(SocketName: string, OnTrigger: (...any) -> nil, AllowDataReturn: boolean)
+function Server:open(SocketName: string, AllowDataReturn: boolean?)
 	local Event = self:FindEvent(SocketName, AllowDataReturn)
-    Event.Parent = self.Events;
+	Event.Parent = self.Events
 	Event.Name = SocketName
+
+	self.Maid:GiveTask(Event)
+end
+
+function Server:connect(SocketName: string, AllowDataReturn: boolean?)
+	return self:open(SocketName, AllowDataReturn)
+end
+
+function Server:close(SocketName: string)
+	if self.Events:FindFirstChild(SocketName) then
+		self.Events:FindFirstChild(SocketName):Destroy()
+	end
+end
+
+function Server:disconnect(SocketName: string)
+	return self:close(SocketName)
+end
+
+function Server:on(
+	SocketName: string,
+	OnTrigger: (...any) -> nil?,
+	AllowDataReturn: boolean?,
+	SilenceWarnings: boolean?
+)
+	SilenceWarnings = SilenceWarnings or false
+
+	local Event = self:FindEvent(SocketName, AllowDataReturn)
+	Event.Parent = self.Events
+	Event.Name = SocketName
+
+	self.Maid:GiveTask(Event)
+
+	if not OnTrigger then
+		return
+	end
 
 	if AllowDataReturn then
 		Event.OnServerInvoke = function(Player: Player, ...)
 			if not self.MiddlewareAuthentication(Player, SocketName) then
-                warn(("%s attempted to call a restricited socket '%s'."):format(Player.Name, SocketName))
+				if not SilenceWarnings then
+					warn(("[RBLXLuauSockets] Server: %s attempted to call a restricited socket '%s'."):format(Player.Name, SocketName))
+				end
+
 				return nil
 			end
 
@@ -87,29 +131,32 @@ function Server:on(SocketName: string, OnTrigger: (...any) -> nil, AllowDataRetu
 	else
 		self.Maid:GiveTask(Event.OnServerEvent:Connect(function(Player: Player, ...)
 			if not self.MiddlewareAuthentication(Player, SocketName) then
-                warn(("%s attempted to call a restricited socket '%s'."):format(Player.Name, SocketName))
+				if not SilenceWarnings then
+					warn(("[RBLXLuauSockets] Server: %s attempted to call a restricited socket '%s'."):format(Player.Name, SocketName))
+				end
+
 				return nil
 			end
 
 			return OnTrigger(Player, ...)
 		end))
 	end
-
-	self.Maid:GiveTask(Event)
 end
 
-function Server:emit(SocketName: string, Player: Player | boolean, ...): (...any)
+function Server:emit(SocketName: string, Player: Player | boolean, ...): ...any
 	local Event = self:FindEvent(SocketName, false)
 
 	if Event:IsA("RemoteFunction") then
 		if typeof(Player) == "boolean" then
-            warn(("Socket %s cannot return data with no player specified, you will keep getting NIL."):format(SocketName))
+			warn(
+				("[RBLXLuauSockets] Server: Socket %s cannot return data with no player specified, you will keep getting NIL."):format(SocketName)
+			)
 
-            for i,v in pairs(Players:GetPlayers()) do
-                Event:InvokeClient(v, ...)
-            end
+			for i, v in pairs(Players:GetPlayers()) do
+				Event:InvokeClient(v, ...)
+			end
 
-            return nil;
+			return nil
 		else
 			return Event:InvokeClient(Player, ...)
 		end
@@ -145,7 +192,7 @@ function Client:on(SocketName: string, OnTrigger: (...any) -> nil)
 	local Event = self.Events:FindFirstChild(SocketName)
 
 	if Event == nil then
-		warn("Socket " .. SocketName .. " does not exist.")
+		warn("[RBLXLuauSockets] Server: Socket " .. SocketName .. " does not exist.")
 		return nil
 	end
 
@@ -154,25 +201,39 @@ function Client:on(SocketName: string, OnTrigger: (...any) -> nil)
 	else
 		self.Maid:GiveTask(Event.OnClientEvent:Connect(OnTrigger))
 	end
-
-	self.Maid:GiveTask(Event)
 end
 
-function Client:emit(SocketName: string, ...): (...any)
+function Client:emitSilent(SocketName: string, ...): ...any
 	local Event = self.Events:FindFirstChild(SocketName)
 
 	if Event == nil then
-		warn("Socket " .. SocketName .. " does not exist.")
 		return nil
 	end
-	
+
 	if Event:IsA("RemoteFunction") then
 		return Event:InvokeServer(...)
 	end
-	
-	Event:FireServer(...);
-	
-	return nil;
+
+	Event:FireServer(...)
+
+	return nil
+end
+
+function Client:emit(SocketName: string, ...): ...any
+	local Event = self.Events:FindFirstChild(SocketName)
+
+	if Event == nil then
+		warn("[RBLXLuauSockets] Client: Socket " .. SocketName .. " does not exist.")
+		return nil
+	end
+
+	if Event:IsA("RemoteFunction") then
+		return Event:InvokeServer(...)
+	end
+
+	Event:FireServer(...)
+
+	return nil
 end
 
 function Client:Destroy()
@@ -184,4 +245,4 @@ function Client:Disconnect()
 	return self:Destroy()
 end
 
-return RunService:IsServer() and Server or Client;
+return RunService:IsServer() and Server or Client
